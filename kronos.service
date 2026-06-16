@@ -1,0 +1,12 @@
+[Unit]
+Description=Kronos Virtual Broker Dashboard
+After=network.target
+
+[Service]
+User=jayzawar
+WorkingDirectory=/home/jayzawar/Personal/Shiyu/Kronos
+ExecStart=/home/jayzawar/Personal/Shiyu/Kronos/.venv/bin/python dashboard.py --start-daemon
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

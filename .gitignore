@@ -1,76 +1,29 @@
-# Python
+# Environment & secrets — NEVER commit these
+.env
+*.env
+
+# Python virtual environment
+.venv/
+venv/
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+*.pyc
+*.pyo
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Database (local state, not shared)
+*.db
+*.sqlite3
 
-# PyCharm
-.idea/
+# Data CSVs (large, regenerated at runtime)
+data/
 
-# VS Code
+# IDE
 .vscode/
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# Linux
-*~
-
-# Data files (large files)
-*.feather
-*.parquet
-*.h5
-*.hdf5
-
-# Model files (large files)
-*.pth
-*.pt
-*.ckpt
-*.bin
+.idea/
 
 # Logs
 *.log
 logs/
 
-# Environment
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Temporary files
-*.tmp
-*.temp
-temp/
-tmp/
-.python-version
+# OS
+.DS_Store
+Thumbs.db

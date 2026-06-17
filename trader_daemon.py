@@ -2,6 +2,9 @@ import time
 import threading
 from datetime import datetime
 from database import get_setting, get_open_positions, open_position, close_position, get_portfolio, update_sell_signal_count, update_position_peak_price
+from strategist import StrategyAnalyzer
+from skills_engine import SkillsEngine
+import broker_api
 
 AUTO_TRADE_POOL = [
     # Crypto (Binance)
@@ -48,17 +51,21 @@ HOLD_RULES = {
 
 def daemon_loop(eval_func):
     print("[Daemon] Virtual Broker daemon started.")
+    analyzer = StrategyAnalyzer()
+    skills_engine = SkillsEngine()
+    
     while True:
         try:
             enabled = get_setting("daemon_enabled")
             if enabled == "true":
-                _evaluate_trades(eval_func)
+                analyzer.analyze()
+                _evaluate_trades(eval_func, analyzer, skills_engine)
             time.sleep(60)
         except Exception as e:
             print(f"[Daemon] Error in loop: {e}")
             time.sleep(60)
 
-def _evaluate_trades(eval_func):
+def _evaluate_trades(eval_func, analyzer, skills_engine):
     open_pos = get_open_positions()
     open_symbols = {p["symbol"]: p for p in open_pos}
     
@@ -76,7 +83,12 @@ def _evaluate_trades(eval_func):
             result = eval_func(asset)
             if not result: continue
             
-            signal, confidence, last_price = result
+            if len(result) == 4:
+                signal, confidence, last_price, df = result
+            else:
+                signal, confidence, last_price = result
+                df = None
+                
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             now = datetime.now()
             
@@ -84,19 +96,41 @@ def _evaluate_trades(eval_func):
             
             if not pos:
                 # ── OPEN POSITION LOGIC ───────────────────────────────────────
-                if signal == "BUY" and confidence > 0.6:
-                    if cat_counts.get(category, 0) >= 2:
-                        print(f"[Daemon] ⏸️ Skipping {symbol} BUY: category '{category}' cap reached (2 max)")
-                        continue
+                if signal == "BUY":
+                    profile = analyzer.get_profile(category)
+                    confidence_floor = profile.get("confidence_floor", 0.60)
+                    position_mult = profile.get("position_mult", 1.0)
+                    
+                    if confidence > confidence_floor:
+                        if cat_counts.get(category, 0) >= 2:
+                            print(f"[Daemon] ⏸️ Skipping {symbol} BUY: category '{category}' cap reached (2 max)")
+                            continue
+                            
+                        # --- Master Orchestrator Validation ---
+                        is_allowed, veto_reason = skills_engine.evaluate_trade(asset, signal, df, open_pos)
+                        if not is_allowed:
+                            print(f"[Daemon] 🛑 STRATEGIST VETO on {symbol}: {veto_reason}")
+                            continue
+                            
+                        port = get_portfolio()
+                        cash = port["cash_balance"]
                         
-                    port = get_portfolio()
-                    cash = port["cash_balance"]
-                    trade_amount = cash * 0.20
-                    if trade_amount > 100:
-                        qty = round(trade_amount / last_price, 4)
-                        open_position(symbol, "BUY", qty, last_price, timestamp, category)
-                        cat_counts[category] = cat_counts.get(category, 0) + 1
-                        print(f"[Daemon] 🟢 EXECUTED BUY {qty} {symbol} @ {last_price}")
+                        # Apply Strategist position sizing
+                        # RULE 3: Strict 2% equity risk cap
+                        base_amount = cash * 0.02
+                        trade_amount = base_amount * position_mult
+                        
+                        if trade_amount > 100:
+                            qty = round(trade_amount / last_price, 4)
+                            
+                            # Route through Broker API
+                            if broker_api.place_order(symbol, "BUY", qty, last_price, category):
+                                open_position(symbol, "BUY", qty, last_price, timestamp, category)
+                                skills_engine.increment_trade_counter()
+                                cat_counts[category] = cat_counts.get(category, 0) + 1
+                                print(f"[Daemon] 🟢 RECORDED BUY {qty} {symbol} @ {last_price} (Mult: {position_mult}x) [Orchestrator Approved]")
+                            else:
+                                print(f"[Daemon] ❌ BUY FAILED AT BROKER for {symbol}")
                         
             else:
                 # ── CLOSE POSITION LOGIC (THREE ZONES) ────────────────────────
@@ -120,10 +154,13 @@ def _evaluate_trades(eval_func):
                 should_sell = False
                 reason = ""
                 
+                profile = analyzer.get_profile(pos["category"])
+                dynamic_stop_pct = rules["stop_pct"] * profile.get("stop_loss_mult", 1.0)
+                
                 # 1. Hard stop loss
-                if pnl_pct <= -rules["stop_pct"]:
+                if pnl_pct <= -dynamic_stop_pct:
                     should_sell = True
-                    reason = f"STOP LOSS (-{rules['stop_pct']}%)"
+                    reason = f"STOP LOSS (-{dynamic_stop_pct:.1f}%)"
                     
                 # 2. Zone 2 - Early Override
                 elif pnl_pct >= rules["early_override_pct"]:
@@ -150,9 +187,13 @@ def _evaluate_trades(eval_func):
                         update_sell_signal_count(pos["id"], 0)
                         
                 if should_sell:
-                    close_position(pos["id"], last_price, timestamp)
-                    cat_counts[category] = cat_counts.get(category, 0) - 1
-                    print(f"[Daemon] 🔴 EXECUTED SELL {pos['quantity']} {symbol} @ {last_price} — {reason}")
+                    # Route through Broker API
+                    if broker_api.place_order(symbol, "SELL", pos['quantity'], last_price, pos["category"]):
+                        close_position(pos["id"], last_price, timestamp)
+                        cat_counts[category] = cat_counts.get(category, 0) - 1
+                        print(f"[Daemon] 🔴 RECORDED SELL {pos['quantity']} {symbol} @ {last_price} — {reason}")
+                    else:
+                        print(f"[Daemon] ❌ SELL FAILED AT BROKER for {symbol}")
 
         except Exception as e:
             print(f"[Daemon] Error evaluating {symbol}: {e}")

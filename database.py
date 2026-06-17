@@ -234,6 +234,33 @@ def get_trade_history(limit: int = 50) -> list:
             } for row in rows
         ]
 
+def get_all_trade_history() -> list:
+    """Fetch all completed trades for Strategist Agent analysis."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, symbol, side, quantity, entry_price, entry_time, exit_price, exit_time, pnl, pnl_percent, category
+            FROM trade_history
+            ORDER BY id ASC
+        """)
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": row[0],
+                "symbol": row[1],
+                "side": row[2],
+                "quantity": row[3],
+                "entry_price": row[4],
+                "entry_time": row[5],
+                "exit_price": row[6],
+                "exit_time": row[7],
+                "pnl": row[8],
+                "pnl_percent": row[9],
+                "category": row[10]
+            }
+            for row in rows
+        ]
+
 if __name__ == "__main__":
     init_db()
     print("Database initialized.")

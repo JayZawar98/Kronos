@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "improve-codebase-architecture": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
+      "computedHash": "8bf292143ca93b00276a0de0fc5f84f2381f4690c5b0d32e99fa283a072f392f"
+    },
+    "market-regimes": {
+      "source": "0xhubed/agent-trading-arena",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/market-regimes/SKILL.md",
+      "computedHash": "ca9ab8998515e019e989f9d3a8a70db527716fab3880e4a619dbfe14d873da55"
+    },
+    "risk-management": {
+      "source": "0xhubed/agent-trading-arena",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/risk-management/SKILL.md",
+      "computedHash": "e64e6863b041bf23565ade0cc0d941bc7896be3be02067f0c56a4544809421c5"
+    },
+    "technical-analysis": {
+      "source": "omer-metin/skills-for-antigravity",
+      "sourceType": "github",
+      "skillPath": "skills/technical-analysis/SKILL.md",
+      "computedHash": "648e00fcf4b1da1689fa1df1bad5249c5f04625e6264475369d51a3a50a7eb0d"
+    },
+    "trading-analysis": {
+      "source": "gracefullight/stock-checker",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/trading-analysis/SKILL.md",
+      "computedHash": "886bdbb07be29864ef396e06c3cc2b0931d767c93e46487a2f26594c5b09c9f2"
+    }
+  }
+}

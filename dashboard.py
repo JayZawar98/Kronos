@@ -50,8 +50,11 @@ except ImportError:
 from data_fetcher import fetch_binance, fetch_yfinance, fetch_fyers, fetch_indian_stock, DATA_DIR
 
 # ── Virtual Broker ────────────────────────────────────────────────────────────
-from database import get_portfolio, get_open_positions, get_trade_history, get_setting, set_setting, init_db
+from database import init_db, get_portfolio, get_open_positions, get_trade_history, get_setting, set_setting, close_position
+from data_fetcher import DataFetcher
+from signal_generator import SignalGenerator
 from trader_daemon import start_daemon
+from strategist import StrategyAnalyzer
 
 app = Flask(__name__, template_folder="webui/templates", static_folder="webui/static")
 app.jinja_env.auto_reload = True
@@ -272,6 +275,15 @@ def api_portfolio():
         hist = get_trade_history(limit=20)
         enabled = get_setting("daemon_enabled") == "true"
         return jsonify({"status": "ok", "portfolio": port, "positions": pos, "history": hist, "daemon_enabled": enabled})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/strategy-insights", methods=["GET"])
+def api_strategy_insights():
+    try:
+        analyzer = StrategyAnalyzer()
+        analyzer.analyze()
+        return jsonify({"status": "ok", "insights": analyzer.get_all_insights()})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -506,7 +518,7 @@ def _daemon_evaluator(asset):
             pred_df[col] = np.mean([p[col].values for p in all_preds], axis=0)
             
         sig_info = _generate_signal(df.iloc[-lookback:], pred_df, ctx)
-        return sig_info["signal"], sig_info["confidence"], df.iloc[-1]["close"]
+        return sig_info["signal"], sig_info["confidence"], df.iloc[-1]["close"], df
     except Exception as e:
         print(f"[Daemon Evaluator Error] {e}")
         return None

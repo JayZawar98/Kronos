@@ -183,6 +183,39 @@ header {
   font-size: 0.82rem;
 }
 
+/* ── Strategy Brain ─────────────────────────────────────────────────── */
+.brain-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.brain-card {
+  background: var(--surface2);
+  border: 1px solid rgba(139, 92, 246, 0.3); /* slight purple tint for AI */
+  border-radius: var(--r-sm);
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+.brain-card::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, #8B5CF6, #3B82F6);
+}
+.brain-header {
+  font-size: 0.85rem; font-weight: 600; text-transform: uppercase;
+  color: var(--text); margin-bottom: 12px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.brain-metrics {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.b-met { display: flex; flex-direction: column; gap: 4px; }
+.b-lbl { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+.b-val { font-size: 1.1rem; font-weight: 700; font-family: var(--mono); color: var(--text); }
+.b-val.good { color: var(--buy); }
+.b-val.bad { color: var(--sell); }
+
 /* ── Category Layout (Responsive Grid) ──────────────────────────────── */
 .categories-container {
   display: grid;
@@ -364,6 +397,14 @@ header {
 
 <!-- Page content -->
 <div class="page">
+
+  <!-- Strategy Brain Section -->
+  <div class="section-hdr">
+    <h2>🧠 Strategy Brain <span style="font-size:0.7rem;font-weight:normal;color:var(--muted);margin-left:8px;">Live Adjustments</span></h2>
+  </div>
+  <div class="brain-container" id="brain-container">
+    <div class="empty-state" style="grid-column: 1/-1">Waking up strategist...</div>
+  </div>
 
   <!-- Metrics -->
   <div class="metrics">
@@ -584,6 +625,82 @@ async function loadPortfolio() {
     histList.innerHTML = html;
   } else {
     histList.innerHTML = '<div class="empty-state">No trades yet</div>';
+  }
+
+  // Fetch Strategy Insights (Phase 3)
+  fetchStrategyInsights();
+}
+
+async function fetchStrategyInsights() {
+  try {
+    const res = await api("/api/strategy-insights");
+    if (res.status === "ok") {
+      renderStrategyBrain(res.insights);
+    }
+  } catch (e) {
+    console.error("Strategy fetch error:", e);
+  }
+}
+
+function renderStrategyBrain(insights) {
+  const el = document.getElementById("brain-container");
+  el.innerHTML = "";
+  
+  if (!insights || Object.keys(insights).length === 0) {
+    el.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No strategy data yet.</div>`;
+    return;
+  }
+
+  const CATEGORY_MAP = {
+    "india_large": "🔵 India Large Cap",
+    "india_mid": "🟡 India Mid Cap",
+    "india_small": "🔴 India Small Cap",
+    "crypto_large": "🌍 Crypto Large",
+    "crypto_mid": "🌍 Crypto Mid",
+    "us_large": "🇺🇸 US Stocks",
+    "unknown": "⚪ Other"
+  };
+
+  for (const [cat, data] of Object.entries(insights)) {
+    const catTitle = CATEGORY_MAP[cat] || cat;
+    
+    // Win Rate styling
+    const wrClass = data.win_rate >= 60 ? "good" : (data.win_rate < 40 && data.trade_count > 0 ? "bad" : "");
+    const wrText = data.trade_count > 0 ? data.win_rate + '%' : '--';
+
+    // Multiplier styling
+    const mult = data.profile.position_mult;
+    let multStr = `${mult}x`;
+    let multClass = "";
+    if (mult > 1.0) { multStr = `⬆ ${mult}x`; multClass = "good"; }
+    if (mult < 1.0) { multStr = `⬇ ${mult}x`; multClass = "bad"; }
+
+    el.innerHTML += `
+      <div class="brain-card">
+        <div class="brain-header">
+          <span>${catTitle}</span>
+          <span style="font-size:0.7rem; color:var(--muted)">Trades: ${data.trade_count}</span>
+        </div>
+        <div class="brain-metrics">
+          <div class="b-met">
+            <span class="b-lbl">Win Rate</span>
+            <span class="b-val ${wrClass}">${wrText}</span>
+          </div>
+          <div class="b-met">
+            <span class="b-lbl">Pos. Multiplier</span>
+            <span class="b-val ${multClass}">${multStr}</span>
+          </div>
+          <div class="b-met">
+            <span class="b-lbl">Conf. Floor</span>
+            <span class="b-val">${(data.profile.confidence_floor * 100).toFixed(0)}%</span>
+          </div>
+          <div class="b-met">
+            <span class="b-lbl">Stop Adjust</span>
+            <span class="b-val">${data.profile.stop_loss_mult}x</span>
+          </div>
+        </div>
+      </div>
+    `;
   }
 }
 

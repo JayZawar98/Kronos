@@ -1,5 +1,4 @@
 import pandas as pd
-import pandas_ta as ta
 import yfinance as yf
 from datetime import datetime
 import nltk
@@ -69,10 +68,18 @@ class SkillsEngine:
         try:
             # We must operate on a copy to avoid SettingWithCopyWarning
             work_df = df.copy()
-            work_df['RSI'] = ta.rsi(work_df['close'], length=14)
-            macd = ta.macd(work_df['close'], fast=12, slow=26, signal=9)
-            if macd is not None and not macd.empty:
-                work_df = pd.concat([work_df, macd], axis=1)
+            
+            # Native RSI (14) Calculation
+            delta = work_df['close'].diff()
+            gain = delta.where(delta > 0, 0.0)
+            loss = -delta.where(delta < 0, 0.0)
+            avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
+            avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
+            rs = avg_gain / avg_loss
+            work_df['RSI_14'] = 100 - (100 / (1 + rs))
+            
+            # Native SMA (200) Calculation
+            work_df['SMA_200'] = work_df['close'].rolling(window=200).mean()
                 
             latest = work_df.iloc[-1]
             
@@ -81,7 +88,6 @@ class SkillsEngine:
                 if pd.notna(rsi) and rsi > 80:
                     return False, f"TA Node: RSI is {rsi:.1f} (Overbought context). Waiting for pullback."
                 
-                work_df['SMA_200'] = ta.sma(work_df['close'], length=200)
                 sma = latest.get("SMA_200")
                 if pd.notna(sma) and latest['close'] < sma * 0.95:
                     return False, "TA Node: Multi-Timeframe Confluence VETO. Severe bearish trend."

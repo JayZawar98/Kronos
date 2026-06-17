@@ -4,7 +4,6 @@ import time
 from datetime import datetime, timedelta
 from data_fetcher import fetch_binance, fetch_yfinance, fetch_indian_stock
 from skills_engine import SkillsEngine
-import pandas_ta as ta
 
 class Backtester:
     def __init__(self, use_llm=False):
@@ -41,8 +40,8 @@ class Backtester:
     def _mock_signal_generator(self, df):
         """Fast SMA-crossover proxy if not using LLM"""
         df_ta = df.copy()
-        df_ta.ta.sma(length=10, append=True)
-        df_ta.ta.sma(length=50, append=True)
+        df_ta['SMA_10'] = df_ta['close'].rolling(window=10).mean()
+        df_ta['SMA_50'] = df_ta['close'].rolling(window=50).mean()
         
         last = df_ta.iloc[-1]
         prev = df_ta.iloc[-2]

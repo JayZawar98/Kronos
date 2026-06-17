@@ -51,7 +51,7 @@ from data_fetcher import fetch_binance, fetch_yfinance, fetch_fyers, fetch_india
 
 # ── Virtual Broker ────────────────────────────────────────────────────────────
 from database import init_db, get_portfolio, get_open_positions, get_trade_history, get_setting, set_setting, close_position
-from data_fetcher import DataFetcher
+
 from signal_generator import SignalGenerator
 from trader_daemon import start_daemon
 from strategist import StrategyAnalyzer

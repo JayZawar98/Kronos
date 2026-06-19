@@ -16,26 +16,26 @@ AUTO_TRADE_POOL = [
     {"source": "binance", "symbol": "SOLUSDT",  "interval": "1h", "category": "crypto_mid"},
     {"source": "binance", "symbol": "XRPUSDT",  "interval": "1h", "category": "crypto_mid"},
 
-    # India Large Cap
-    {"source": "fyers_fallback", "symbol": "NSE:RELIANCE-EQ",  "yf_ticker": "RELIANCE.NS",  "interval": "60", "category": "india_large"},
-    {"source": "fyers_fallback", "symbol": "NSE:TCS-EQ",       "yf_ticker": "TCS.NS",       "interval": "60", "category": "india_large"},
-    {"source": "fyers_fallback", "symbol": "NSE:HDFCBANK-EQ",  "yf_ticker": "HDFCBANK.NS",  "interval": "60", "category": "india_large"},
-    {"source": "fyers_fallback", "symbol": "NSE:ICICIBANK-EQ", "yf_ticker": "ICICIBANK.NS", "interval": "60", "category": "india_large"},
-    {"source": "fyers_fallback", "symbol": "NSE:INFY-EQ",      "yf_ticker": "INFY.NS",      "interval": "60", "category": "india_large"},
-    {"source": "fyers_fallback", "symbol": "NSE:LT-EQ",        "yf_ticker": "LT.NS",        "interval": "60", "category": "india_large"},
-    {"source": "fyers_fallback", "symbol": "NSE:WIPRO-EQ",     "yf_ticker": "WIPRO.NS",     "interval": "60", "category": "india_large"},
+    # India Large Cap (Angel One token / Yahoo Finance)
+    {"source": "angelone_fallback", "symbol": "2885",  "yf_ticker": "RELIANCE.NS",  "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "11536", "yf_ticker": "TCS.NS",       "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "1333",  "yf_ticker": "HDFCBANK.NS",  "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "4963",  "yf_ticker": "ICICIBANK.NS", "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "1594",  "yf_ticker": "INFY.NS",      "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "11483", "yf_ticker": "LT.NS",        "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "3787",  "yf_ticker": "WIPRO.NS",     "interval": "60", "category": "india_large"},
 
     # India Mid Cap
-    {"source": "fyers_fallback", "symbol": "NSE:TATAMOTORS-EQ",  "yf_ticker": "TATAMOTORS.NS",  "interval": "60", "category": "india_mid"},
-    {"source": "fyers_fallback", "symbol": "NSE:ZOMATO-EQ",      "yf_ticker": "ZOMATO.NS",      "interval": "60", "category": "india_mid"},
-    {"source": "fyers_fallback", "symbol": "NSE:ADANIPORTS-EQ",  "yf_ticker": "ADANIPORTS.NS",  "interval": "60", "category": "india_mid"},
-    {"source": "fyers_fallback", "symbol": "NSE:BAJFINANCE-EQ",  "yf_ticker": "BAJFINANCE.NS",  "interval": "60", "category": "india_mid"},
-    {"source": "fyers_fallback", "symbol": "NSE:HAVELLS-EQ",     "yf_ticker": "HAVELLS.NS",     "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "3456",  "yf_ticker": "TATAMOTORS.NS",  "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "5097",  "yf_ticker": "ZOMATO.NS",      "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "15083", "yf_ticker": "ADANIPORTS.NS",  "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "317",   "yf_ticker": "BAJFINANCE.NS",  "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "9819",  "yf_ticker": "HAVELLS.NS",     "interval": "60", "category": "india_mid"},
 
     # India Small Cap
-    {"source": "fyers_fallback", "symbol": "NSE:IRFC-EQ",     "yf_ticker": "IRFC.NS",     "interval": "60", "category": "india_small"},
-    {"source": "fyers_fallback", "symbol": "NSE:NMDC-EQ",     "yf_ticker": "NMDC.NS",     "interval": "60", "category": "india_small"},
-    {"source": "fyers_fallback", "symbol": "NSE:ASHOKLEY-EQ", "yf_ticker": "ASHOKLEY.NS", "interval": "60", "category": "india_small"},
+    {"source": "angelone_fallback", "symbol": "2029",  "yf_ticker": "IRFC.NS",     "interval": "60", "category": "india_small"},
+    {"source": "angelone_fallback", "symbol": "15332", "yf_ticker": "NMDC.NS",     "interval": "60", "category": "india_small"},
+    {"source": "angelone_fallback", "symbol": "212",   "yf_ticker": "ASHOKLEY.NS", "interval": "60", "category": "india_small"},
 
     # US Stocks
     {"source": "yfinance", "symbol": "NVDA", "interval": "1h", "category": "us_large"},
@@ -283,7 +283,7 @@ def start_daemon(eval_func):
 
 if __name__ == "__main__":
     from kronos.model.kronos import Kronos, KronosTokenizer, KronosPredictor
-    from kronos.data.fetcher import fetch_binance, fetch_yfinance, fetch_fyers, fetch_indian_stock
+    from kronos.data.fetcher import fetch_binance, fetch_yfinance, fetch_fyers, fetch_indian_stock, fetch_angel_one
     from kronos.data.repository import init_db
     import numpy as np
     import pandas as pd
@@ -298,9 +298,9 @@ if __name__ == "__main__":
     def _load_df(source: str, symbol: str = None, ticker: str = None, interval: str = "1h") -> pd.DataFrame:
         cfg = TIMEFRAME_CONFIG.get(interval, TIMEFRAME_CONFIG["1h"])
         if source == "binance": return fetch_binance(symbol, cfg["binance_interval"], cfg["binance_days"])
-        elif source == "fyers": return fetch_fyers(symbol, cfg["fyers_interval"], cfg["fyers_days"])
-        elif source == "fyers_fallback": 
-            df, _ = fetch_indian_stock(symbol, ticker, cfg["fyers_interval"], cfg["fyers_days"])
+        elif source == "angelone": return fetch_angel_one(symbol, "NSE", cfg["fyers_interval"], cfg["fyers_days"])
+        elif source == "angelone_fallback": 
+            df, src = fetch_indian_stock(symbol, ticker, cfg["fyers_interval"], cfg["fyers_days"])
             return df
         else: return fetch_yfinance(ticker, cfg["yf_interval"], cfg["yf_period"])
 

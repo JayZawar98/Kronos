@@ -192,60 +192,69 @@ def fetch_yfinance(
 
 
 # ---------------------------------------------------------------------------
-# FYERS API (True Real-Time NSE/BSE)
+# ANGEL ONE SMART API (Real-Time NSE/BSE)
 # ---------------------------------------------------------------------------
 
-def fetch_fyers(
-    symbol: str = "NSE:RELIANCE-EQ",
-    interval: str = "60",
+def fetch_angel_one(
+    symbol: str = "2885",  # Reliance NSE token
+    exchange: str = "NSE",
+    interval: str = "ONE_HOUR",
     days: int = 60,
 ) -> pd.DataFrame:
     """
-    Download candlestick data from FYERS.
-    Requires FYERS_CLIENT_ID and FYERS_ACCESS_TOKEN in .env.
+    Download candlestick data from Angel One SmartAPI.
+    Requires ANGEL_API_KEY, ANGEL_CLIENT_CODE, ANGEL_PASSWORD, ANGEL_TOTP_SECRET in .env.
     """
     try:
-        from fyers_apiv3 import fyersModel
+        from SmartApi import SmartConnect
+        import pyotp
     except ImportError:
-        raise ImportError("fyers-apiv3 is not installed. Run: pip install fyers-apiv3")
+        raise ImportError("smartapi-python or pyotp is not installed. Run: pip install smartapi-python pyotp")
 
     load_dotenv(override=True)
-    client_id = os.getenv("FYERS_CLIENT_ID")
-    access_token = os.getenv("FYERS_ACCESS_TOKEN")
+    api_key = os.getenv("ANGEL_API_KEY")
+    client_code = os.getenv("ANGEL_CLIENT_CODE")
+    password = os.getenv("ANGEL_PASSWORD")
+    totp_secret = os.getenv("ANGEL_TOTP_SECRET")
 
-    if not client_id or not access_token or "your_" in client_id:
-        raise ValueError("Please enter your actual FYERS_CLIENT_ID and FYERS_ACCESS_TOKEN in the .env file.")
+    if not all([api_key, client_code, password, totp_secret]) or "your_" in api_key:
+        raise ValueError("Please enter your actual Angel One credentials in the .env file.")
 
-    print(f"[FYERS] Fetching {symbol} {interval} for last {days} days …")
+    print(f"[AngelOne] Fetching {symbol} ({exchange}) {interval} for last {days} days …")
     
-    fyers = fyersModel.FyersModel(client_id=client_id, is_async=False, token=access_token, log_path="")
-
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-
-    data = {
-        "symbol": symbol,
-        "resolution": interval,
-        "date_format": "1",
-        "range_from": start_date,
-        "range_to": end_date,
-        "cont_flag": "1"
+    # 1. Initialize SmartConnect and generate TOTP
+    obj = SmartConnect(api_key=api_key)
+    totp = pyotp.TOTP(totp_secret).now()
+    
+    # 2. Login
+    data = obj.generateSession(client_code, password, totp)
+    if data.get("status") is False:
+        raise RuntimeError(f"Angel One Login Failed: {data.get('message')}")
+        
+    # 3. Fetch Historical Data
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    
+    historicParam = {
+        "exchange": exchange,
+        "symboltoken": symbol,
+        "interval": interval,
+        "fromdate": start_date.strftime("%Y-%m-%d %H:%M"), 
+        "todate": end_date.strftime("%Y-%m-%d %H:%M")
     }
+    
+    # Angel One historical API limits data per request depending on interval.
+    # For ONE_HOUR, it allows 400 days in a single chunk, so 60 days is perfectly fine.
+    res = obj.getCandleData(historicParam)
+    
+    if res.get("status") is False or not res.get("data"):
+        raise RuntimeError(f"Angel One fetch error: {res.get('message', 'No data returned')}")
 
-    response = fyers.history(data=data)
-    if response.get("s") != "ok":
-        raise RuntimeError(f"FYERS API error: {response}")
-
-    candles = response.get("candles", [])
-    if not candles:
-        raise RuntimeError(f"No data returned for {symbol}. Check the ticker symbol.")
-
+    # Data format: [timestamp, open, high, low, close, volume]
+    candles = res["data"]
     df = pd.DataFrame(candles, columns=["timestamps", "open", "high", "low", "close", "volume"])
     
-    # FYERS returns epoch timestamp in seconds
-    df["timestamps"] = pd.to_datetime(df["timestamps"], unit="s")
-    
-    # Strip timezone
+    df["timestamps"] = pd.to_datetime(df["timestamps"])
     if df["timestamps"].dt.tz is not None:
         df["timestamps"] = df["timestamps"].dt.tz_localize(None)
 
@@ -257,35 +266,42 @@ def fetch_fyers(
     df.sort_values("timestamps", inplace=True)
     df.reset_index(drop=True, inplace=True)
 
-    safe_ticker = symbol.replace(":", "_").replace("-", "_")
-    fname = f"FYERS_{safe_ticker}_{interval}_{days}d.csv"
+    fname = f"ANGEL_{symbol}_{interval}_{days}d.csv"
     fpath = os.path.join(DATA_DIR, fname)
     df.to_csv(fpath, index=False)
-    print(f"[FYERS] Saved {len(df)} rows → {fpath}")
+    print(f"[AngelOne] Saved {len(df)} rows → {fpath}")
+    
+    # Always log out to avoid session limit errors
+    try:
+        obj.terminateSession(client_code)
+    except:
+        pass
+        
     return df
 
 
 # ---------------------------------------------------------------------------
-# Fallback Fetcher (Fyers -> YFinance)
+# Fallback Fetcher (Angel One -> YFinance)
 # ---------------------------------------------------------------------------
 
-def fetch_indian_stock(fyers_symbol: str, yf_ticker: str, interval: str, days: int) -> Tuple[pd.DataFrame, str]:
-    """Try Fyers first (real-time), fall back to Yahoo Finance (15-min delayed)."""
+def fetch_indian_stock(angel_token: str, yf_ticker: str, interval: str, days: int) -> Tuple[pd.DataFrame, str]:
+    """Try Angel One first (real-time), fall back to Yahoo Finance (15-min delayed)."""
     try:
-        df = fetch_fyers(fyers_symbol, interval, days)
-        print(f"[Data] ✅ Fyers success: {fyers_symbol}")
-        return df, "fyers"
+        # Map generic interval '1h' to Angel One 'ONE_HOUR'
+        angel_interval = "ONE_HOUR" if interval in ["60", "1h"] else interval
+        df = fetch_angel_one(angel_token, "NSE", angel_interval, days)
+        print(f"[Data] ✅ Angel One success: {angel_token}")
+        return df, "angelone"
     except Exception as e:
-        print(f"[Data] ⚠️ Fyers failed ({e}). Falling back to Yahoo Finance for {yf_ticker}.")
+        print(f"[Data] ⚠️ Angel One failed ({e}). Falling back to Yahoo Finance for {yf_ticker}.")
         try:
-            # yf_interval mapping: '60' (fyers 60m) -> '1h' (yfinance)
-            yf_int = "1h" if interval == "60" else interval
-            # Yahoo finance requires period like "60d"
+            # yf_interval mapping
+            yf_int = "1h" if interval in ["60", "ONE_HOUR"] else interval
             df = fetch_yfinance(yf_ticker, yf_int, f"{days}d")
             print(f"[Data] ✅ Yahoo Finance fallback success: {yf_ticker}")
             return df, "yfinance"
         except Exception as e2:
-            raise RuntimeError(f"Both Fyers and Yahoo Finance failed. YF error: {e2}")
+            raise RuntimeError(f"Both Angel One and Yahoo Finance failed. YF error: {e2}")
 
 # ---------------------------------------------------------------------------
 # Convenience: fetch a preset basket of assets
@@ -312,9 +328,9 @@ def fetch_all_presets():
             if asset["source"] == "binance":
                 df = fetch_binance(asset["symbol"], asset["interval"], asset["days"])
                 key = f"BINANCE_{asset['symbol']}_{asset['interval']}"
-            elif asset["source"] == "fyers":
-                df = fetch_fyers(asset["symbol"], asset["interval"], asset["days"])
-                key = f"FYERS_{asset['symbol']}_{asset['interval']}"
+            elif asset["source"] == "angelone":
+                df = fetch_angel_one(asset["symbol"], "NSE", asset["interval"], asset["days"])
+                key = f"ANGEL_{asset['symbol']}_{asset['interval']}"
             else:
                 df = fetch_yfinance(asset["ticker"], asset["interval"], asset["period"])
                 key = f"YF_{asset['ticker']}"

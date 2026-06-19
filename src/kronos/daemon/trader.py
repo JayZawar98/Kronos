@@ -283,7 +283,7 @@ def start_daemon(eval_func):
 
 if __name__ == "__main__":
     from kronos.model.kronos import Kronos, KronosTokenizer, KronosPredictor
-    from kronos.data.fetcher import fetch_binance, fetch_yfinance, fetch_fyers, fetch_indian_stock, fetch_angel_one
+    from kronos.data.fetcher import fetch_binance, fetch_yfinance, fetch_indian_stock, fetch_angel_one
     from kronos.data.repository import init_db
     import numpy as np
     import pandas as pd

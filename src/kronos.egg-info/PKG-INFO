@@ -1,0 +1,29 @@
+Metadata-Version: 2.4
+Name: kronos
+Version: 0.1.0
+Requires-Python: >=3.10
+License-File: LICENSE
+Requires-Dist: torch
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: sqlalchemy
+Requires-Dist: pyyaml
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: flask
+Requires-Dist: flask-cors
+Requires-Dist: plotly
+Requires-Dist: python-dotenv
+Requires-Dist: textblob
+Requires-Dist: ccxt
+Requires-Dist: fyers-apiv3
+Provides-Extra: training
+Requires-Dist: qlib; extra == "training"
+Requires-Dist: transformers; extra == "training"
+Requires-Dist: accelerate; extra == "training"
+Requires-Dist: comet-ml; extra == "training"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Dynamic: license-file

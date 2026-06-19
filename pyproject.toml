@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kronos"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "pandas",
+    "numpy",
+    "sqlalchemy",
+    "pyyaml",
+    "fastapi",
+    "uvicorn",
+    "flask",
+    "flask-cors",
+    "plotly",
+    "python-dotenv",
+    "textblob",
+    "ccxt",
+    "fyers-apiv3",
+    "yfinance",
+    "nltk",
+    "requests",
+]
+
+[project.optional-dependencies]
+training = ["qlib", "transformers", "accelerate", "comet-ml", "einops"]
+dev = ["pytest", "ruff", "mypy"]

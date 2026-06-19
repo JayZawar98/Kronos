@@ -1,0 +1,7 @@
+db:
+  url: "sqlite:///storage/kronos.db"
+
+broker:
+  name: "fyers"
+
+model_path: "storage/models/kronos_latest.pt"

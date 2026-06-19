@@ -27,3 +27,11 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Storage
+storage/
+!storage/.gitkeep
+.env
+config/broker.yaml
+fyersApi.log
+fyersRequests.log

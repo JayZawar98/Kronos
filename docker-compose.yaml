@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.daemon
+    container_name: kronos-daemon
+    restart: always
+    volumes:
+      - ./storage:/app/storage
+      - ./config:/app/config
+    env_file:
+      - .env
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: kronos-dashboard
+    restart: always
+    ports:
+      - "7071:7071"
+    volumes:
+      - ./storage:/app/storage
+      - ./config:/app/config
+    env_file:
+      - .env

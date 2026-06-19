@@ -22,6 +22,8 @@ dependencies = [
     "ccxt",
     "smartapi-python",
     "pyotp",
+    "logzero",
+    "websocket-client",
     "yfinance",
     "nltk",
     "requests",

@@ -14,7 +14,7 @@ __pycache__/
 *.sqlite3
 
 # Data CSVs (large, regenerated at runtime)
-data/
+/data/
 
 # IDE
 .vscode/

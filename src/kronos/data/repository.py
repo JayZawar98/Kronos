@@ -2,7 +2,9 @@ import sqlite3
 import os
 from datetime import datetime
 
-if os.environ.get("APP_ENV") == "prod":
+if os.environ.get("KRONOS_DB_PATH"):
+    DB_PATH = os.environ.get("KRONOS_DB_PATH")
+elif os.environ.get("APP_ENV") == "prod":
     DB_PATH = "/app/storage/kronos_broker.db"
 else:
     DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "kronos_broker.db")

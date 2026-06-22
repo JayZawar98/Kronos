@@ -49,11 +49,11 @@ AUTO_TRADE_POOL = [
 ]
 
 HOLD_RULES = {
-    "india_large": {"min_hold_hours": 4,  "profit_pct": 3.0, "early_override_pct": 6.0,  "trail_pct": 1.5, "stop_pct": 2.0, "signals_needed": 3},
-    "india_mid":   {"min_hold_hours": 2,  "profit_pct": 5.0, "early_override_pct": 10.0, "trail_pct": 2.5, "stop_pct": 3.0, "signals_needed": 3},
-    "india_small": {"min_hold_hours": 6,  "profit_pct": 8.0, "early_override_pct": 15.0, "trail_pct": 4.0, "stop_pct": 4.0, "signals_needed": 3},
+    "india_large": {"min_hold_hours": 4,  "profit_pct": 3.0, "early_override_pct": 12.0, "trail_pct": 1.5, "stop_pct": 3.0, "signals_needed": 3},
+    "india_mid":   {"min_hold_hours": 2,  "profit_pct": 5.0, "early_override_pct": 10.0, "trail_pct": 2.5, "stop_pct": 4.0, "signals_needed": 3},
+    "india_small": {"min_hold_hours": 3,  "profit_pct": 8.0, "early_override_pct": 15.0, "trail_pct": 4.0, "stop_pct": 4.0, "signals_needed": 4},
     "crypto_large":{"min_hold_hours": 2,  "profit_pct": 4.0, "early_override_pct": 8.0,  "trail_pct": 2.0, "stop_pct": 3.0, "signals_needed": 3},
-    "crypto_mid":  {"min_hold_hours": 2,  "profit_pct": 5.0, "early_override_pct": 8.0,  "trail_pct": 2.0, "stop_pct": 3.5, "signals_needed": 3},
+    "crypto_mid":  {"min_hold_hours": 2,  "profit_pct": 5.0, "early_override_pct": 15.0, "trail_pct": 2.0, "stop_pct": 5.0, "signals_needed": 3},
     "us_large":    {"min_hold_hours": 24, "profit_pct": 5.0, "early_override_pct": 10.0, "trail_pct": 2.5, "stop_pct": 3.0, "signals_needed": 2},
 }
 
@@ -181,6 +181,39 @@ async def _fetch_and_batch_predict(assets, predictor, loop, executor):
         
     return final_results
 
+def _get_usd_inr_rate() -> float:
+    rate_str = get_setting("usdinr_rate")
+    last_update_str = get_setting("usdinr_last_update")
+    
+    now = datetime.now()
+    if rate_str and last_update_str:
+        try:
+            last_update = datetime.fromisoformat(last_update_str)
+            if (now - last_update).total_seconds() < 86400: # 24 hours cache
+                return float(rate_str)
+        except:
+            pass
+            
+    # Fetch from yfinance
+    try:
+        import yfinance as yf
+        # Use single string standard call to avoid DataFrame errors
+        df = yf.download("USDINR=X", period="1d", interval="1d", progress=False)
+        if not df.empty:
+            # Handle MultiIndex column returned by modern yfinance
+            if isinstance(df.columns, pd.MultiIndex):
+                rate = float(df['Close'].iloc[-1].iloc[0])
+            else:
+                rate = float(df['Close'].iloc[-1])
+            set_setting("usdinr_rate", str(rate))
+            set_setting("usdinr_last_update", now.isoformat())
+            print(f"[Daemon] Cached new USD/INR exchange rate: {rate:.2f}")
+            return rate
+    except Exception as e:
+        print(f"[Daemon] Warning: Failed to fetch live USD/INR rate: {e}")
+        
+    return float(rate_str) if rate_str else 83.5
+
 async def _evaluate_trades_async(analyzer, skills_engine, drive_state, predictor, loop, executor):
     open_pos = get_open_positions()
     open_symbols = {p["symbol"]: p for p in open_pos}
@@ -189,6 +222,8 @@ async def _evaluate_trades_async(analyzer, skills_engine, drive_state, predictor
     for p in open_pos:
         cat = p.get("category", "crypto_mid")
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        
+    usd_inr_rate = await loop.run_in_executor(executor, _get_usd_inr_rate)
     
     batch_results = await _fetch_and_batch_predict(AUTO_TRADE_POOL, predictor, loop, executor)
     
@@ -198,9 +233,8 @@ async def _evaluate_trades_async(analyzer, skills_engine, drive_state, predictor
         
         try:
             # Currency Normalization: Convert USD assets to INR for unified portfolio math
-            USD_INR_RATE = 83.5
             is_usd = category.startswith("crypto_") or category.startswith("us_")
-            last_price = last_price_raw * USD_INR_RATE if is_usd else last_price_raw
+            last_price = last_price_raw * usd_inr_rate if is_usd else last_price_raw
                 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             now = datetime.now()
@@ -298,8 +332,13 @@ async def _evaluate_trades_async(analyzer, skills_engine, drive_state, predictor
                     if last_price <= trail_floor:
                         should_sell = True
                         reason = f"TRAILING STOP HIT (dropped {rules['trail_pct']}% from peak)"
+                        
+                # 4. Emergency Confidence Override (Gap-downs)
+                elif signal == "SELL" and confidence >= 0.95 and pnl_pct <= -1.5:
+                    should_sell = True
+                    reason = f"CONFIDENCE OVERRIDE (Confidence: {confidence}, PnL: {pnl_pct:.1f}%)"
                 
-                # 4. Zone 1 / Standard exit (Min hold + Signals)
+                # 5. Zone 1 / Standard exit (Min hold + Signals)
                 elif hours_held >= rules["min_hold_hours"] and signal == "SELL":
                     new_count = pos.get("sell_signal_count", 0) + 1
                     update_sell_signal_count(pos["id"], new_count)

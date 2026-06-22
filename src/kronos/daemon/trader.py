@@ -280,7 +280,7 @@ async def _evaluate_trades_async(analyzer, skills_engine, drive_state, predictor
                         trade_amount = min(trade_amount, cash * 0.95)
                         
                         if trade_amount > 100:
-                            qty = round(trade_amount / last_price, 4)
+                            qty = round(trade_amount / last_price, 8)
                             
                             # Route through Broker API
                             if broker_api.place_order(symbol, "BUY", qty, last_price, category):

@@ -17,25 +17,25 @@ AUTO_TRADE_POOL = [
     {"source": "binance", "symbol": "XRPUSDT",  "interval": "1h", "category": "crypto_mid"},
 
     # India Large Cap (Angel One token / Yahoo Finance)
-    {"source": "angelone_fallback", "symbol": "2885",  "yf_ticker": "RELIANCE.NS",  "interval": "60", "category": "india_large"},
-    {"source": "angelone_fallback", "symbol": "11536", "yf_ticker": "TCS.NS",       "interval": "60", "category": "india_large"},
-    {"source": "angelone_fallback", "symbol": "1333",  "yf_ticker": "HDFCBANK.NS",  "interval": "60", "category": "india_large"},
-    {"source": "angelone_fallback", "symbol": "4963",  "yf_ticker": "ICICIBANK.NS", "interval": "60", "category": "india_large"},
-    {"source": "angelone_fallback", "symbol": "1594",  "yf_ticker": "INFY.NS",      "interval": "60", "category": "india_large"},
-    {"source": "angelone_fallback", "symbol": "11483", "yf_ticker": "LT.NS",        "interval": "60", "category": "india_large"},
-    {"source": "angelone_fallback", "symbol": "3787",  "yf_ticker": "WIPRO.NS",     "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "RELIANCE",  "token": "2885",  "yf_ticker": "RELIANCE.NS",  "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "TCS",       "token": "11536", "yf_ticker": "TCS.NS",       "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "HDFCBANK",  "token": "1333",  "yf_ticker": "HDFCBANK.NS",  "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "ICICIBANK", "token": "4963",  "yf_ticker": "ICICIBANK.NS", "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "INFY",      "token": "1594",  "yf_ticker": "INFY.NS",      "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "LT",        "token": "11483", "yf_ticker": "LT.NS",        "interval": "60", "category": "india_large"},
+    {"source": "angelone_fallback", "symbol": "WIPRO",     "token": "3787",  "yf_ticker": "WIPRO.NS",     "interval": "60", "category": "india_large"},
 
     # India Mid Cap
-    {"source": "angelone_fallback", "symbol": "3456",  "yf_ticker": "TATAMOTORS.NS",  "interval": "60", "category": "india_mid"},
-    {"source": "angelone_fallback", "symbol": "5097",  "yf_ticker": "ZOMATO.NS",      "interval": "60", "category": "india_mid"},
-    {"source": "angelone_fallback", "symbol": "15083", "yf_ticker": "ADANIPORTS.NS",  "interval": "60", "category": "india_mid"},
-    {"source": "angelone_fallback", "symbol": "317",   "yf_ticker": "BAJFINANCE.NS",  "interval": "60", "category": "india_mid"},
-    {"source": "angelone_fallback", "symbol": "9819",  "yf_ticker": "HAVELLS.NS",     "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "TATAMOTORS", "token": "3456",  "yf_ticker": "TATAMOTORS.NS",  "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "ZOMATO",     "token": "5097",  "yf_ticker": "ZOMATO.NS",      "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "ADANIPORTS", "token": "15083", "yf_ticker": "ADANIPORTS.NS",  "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "BAJFINANCE", "token": "317",   "yf_ticker": "BAJFINANCE.NS",  "interval": "60", "category": "india_mid"},
+    {"source": "angelone_fallback", "symbol": "HAVELLS",    "token": "9819",  "yf_ticker": "HAVELLS.NS",     "interval": "60", "category": "india_mid"},
 
     # India Small Cap
-    {"source": "angelone_fallback", "symbol": "2029",  "yf_ticker": "IRFC.NS",     "interval": "60", "category": "india_small"},
-    {"source": "angelone_fallback", "symbol": "15332", "yf_ticker": "NMDC.NS",     "interval": "60", "category": "india_small"},
-    {"source": "angelone_fallback", "symbol": "212",   "yf_ticker": "ASHOKLEY.NS", "interval": "60", "category": "india_small"},
+    {"source": "angelone_fallback", "symbol": "IRFC",      "token": "2029",  "yf_ticker": "IRFC.NS",     "interval": "60", "category": "india_small"},
+    {"source": "angelone_fallback", "symbol": "NMDC",      "token": "15332", "yf_ticker": "NMDC.NS",     "interval": "60", "category": "india_small"},
+    {"source": "angelone_fallback", "symbol": "ASHOKLEY",  "token": "212",   "yf_ticker": "ASHOKLEY.NS", "interval": "60", "category": "india_small"},
 
     # US Stocks
     {"source": "yfinance", "symbol": "NVDA", "interval": "1h", "category": "us_large"},
@@ -295,12 +295,12 @@ if __name__ == "__main__":
         "1d":  {"binance_interval": "1d",  "yf_interval": "1d",  "yf_period": "2y",   "binance_days": 500, "fyers_interval": "D",   "fyers_days": 500},
     }
     
-    def _load_df(source: str, symbol: str = None, ticker: str = None, interval: str = "1h") -> pd.DataFrame:
+    def _load_df(source: str, symbol: str = None, token: str = None, ticker: str = None, interval: str = "1h") -> pd.DataFrame:
         cfg = TIMEFRAME_CONFIG.get(interval, TIMEFRAME_CONFIG["1h"])
         if source == "binance": return fetch_binance(symbol, cfg["binance_interval"], cfg["binance_days"])
-        elif source == "angelone": return fetch_angel_one(symbol, "NSE", cfg["fyers_interval"], cfg["fyers_days"])
+        elif source == "angelone": return fetch_angel_one(token or symbol, "NSE", cfg["fyers_interval"], cfg["fyers_days"])
         elif source == "angelone_fallback": 
-            df, src = fetch_indian_stock(symbol, ticker, cfg["fyers_interval"], cfg["fyers_days"])
+            df, src = fetch_indian_stock(token or symbol, ticker, cfg["fyers_interval"], cfg["fyers_days"])
             return df
         else: return fetch_yfinance(ticker, cfg["yf_interval"], cfg["yf_period"])
 
@@ -345,10 +345,11 @@ if __name__ == "__main__":
         try:
             source = asset["source"]
             symbol = asset["symbol"]
+            token = asset.get("token", symbol)
             ticker = asset.get("yf_ticker", symbol)
             interval = asset["interval"]
             
-            df = _load_df(source, symbol=symbol, ticker=ticker, interval=interval)
+            df = _load_df(source, symbol=symbol, token=token, ticker=ticker, interval=interval)
             df.drop_duplicates(subset=["timestamps"], keep="last", inplace=True)
             ctx = _predictor.max_context if hasattr(_predictor, "max_context") else 512
             lookback = min(int(ctx * 0.8), len(df) - 30 - 5)

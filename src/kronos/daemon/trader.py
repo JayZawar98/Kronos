@@ -1,5 +1,8 @@
 import time
 import threading
+import asyncio
+import random
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from kronos.data.repository import get_setting, set_setting, get_open_positions, open_position, close_position, get_portfolio, update_sell_signal_count, update_position_peak_price
 from kronos.strategy.strategist import StrategyAnalyzer
@@ -7,6 +10,9 @@ from kronos.research.skills import SkillsEngine
 from kronos.strategy.objective_tracker import ObjectiveTracker
 from kronos.research.node import ResearchNode
 import kronos.broker.fyers as broker_api
+import numpy as np
+import pandas as pd
+import pytz
 
 AUTO_TRADE_POOL = [
     # Crypto (Binance)
@@ -51,106 +57,146 @@ HOLD_RULES = {
     "us_large":    {"min_hold_hours": 24, "profit_pct": 5.0, "early_override_pct": 10.0, "trail_pct": 2.5, "stop_pct": 3.0, "signals_needed": 2},
 }
 
-def daemon_loop(eval_func):
-    print("[Daemon] Virtual Broker daemon started.")
-    analyzer = StrategyAnalyzer()
-    skills_engine = SkillsEngine()
-    research_node = ResearchNode()
+TIMEFRAME_CONFIG = {
+    "15m": {"binance_interval": "15m", "yf_interval": "15m", "yf_period": "60d",  "binance_days": 30, "fyers_interval": "15",  "fyers_days": 30},
+    "1h":  {"binance_interval": "1h",  "yf_interval": "1h",  "yf_period": "60d",  "binance_days": 60, "fyers_interval": "60",  "fyers_days": 60},
+    "4h":  {"binance_interval": "4h",  "yf_interval": "60m", "yf_period": "60d",  "binance_days": 90, "fyers_interval": "240", "fyers_days": 90},
+    "1d":  {"binance_interval": "1d",  "yf_interval": "1d",  "yf_period": "2y",   "binance_days": 500, "fyers_interval": "D",   "fyers_days": 500},
+}
+
+def _load_df(source: str, symbol: str = None, token: str = None, ticker: str = None, interval: str = "1h") -> pd.DataFrame:
+    from kronos.data.fetcher import fetch_binance, fetch_yfinance, fetch_indian_stock, fetch_angel_one
+    cfg = TIMEFRAME_CONFIG.get(interval, TIMEFRAME_CONFIG["1h"])
+    if source == "binance": return fetch_binance(symbol, cfg["binance_interval"], cfg["binance_days"])
+    elif source == "angelone": return fetch_angel_one(token or symbol, "NSE", cfg["fyers_interval"], cfg["fyers_days"])
+    elif source == "angelone_fallback": 
+        df, src = fetch_indian_stock(token or symbol, ticker, cfg["fyers_interval"], cfg["fyers_days"])
+        return df
+    else: return fetch_yfinance(ticker, cfg["yf_interval"], cfg["yf_period"])
+
+def _compute_atr(df: pd.DataFrame, period: int = 14) -> float:
+    if len(df) < period + 1: return 0.0
+    h, l, c = df["high"].values, df["low"].values, df["close"].values
+    tr = np.maximum(h[1:] - l[1:], np.maximum(np.abs(h[1:] - c[:-1]), np.abs(l[1:] - c[:-1])))
+    atr = float(np.mean(tr[-period:]))
+    return atr / float(c[-1])
+
+def _generate_signal(df: pd.DataFrame, pred_df: pd.DataFrame, context_len: int = 2048) -> dict:
+    last_close = float(df["close"].iloc[-1])
+    forecast_close = float(pred_df["close"].iloc[-1])
+    return_pct = (forecast_close - last_close) / last_close * 100.0
+    atr_pct = _compute_atr(df) * 100.0
+    threshold = max(atr_pct * 0.5, 0.10)
     
-    # Initialize epoch tracking
-    port = get_portfolio()
-    current_equity = port["total_equity"]
+    if return_pct > threshold: signal = "BUY"
+    elif return_pct < -threshold: signal = "SELL"
+    else: signal = "HOLD"
     
-    epoch_time_str = get_setting("epoch_start_time")
-    week_eq_str = get_setting("epoch_week_start_equity")
-    month_eq_str = get_setting("epoch_month_start_equity")
+    sigma = atr_pct / 2.0 if atr_pct > 0 else 0.5
+    confidence = min(abs(return_pct) / max(threshold + sigma, 0.01), 1.0)
     
-    if not epoch_time_str or not week_eq_str or not month_eq_str:
-        epoch_start_time = datetime.now()
-        start_of_week = current_equity
-        start_of_month = current_equity
-        set_setting("epoch_start_time", epoch_start_time.isoformat())
-        set_setting("epoch_week_start_equity", str(start_of_week))
-        set_setting("epoch_month_start_equity", str(start_of_month))
-    else:
-        epoch_start_time = datetime.fromisoformat(epoch_time_str)
-        start_of_week = float(week_eq_str)
-        start_of_month = float(month_eq_str)
-    
-    while True:
+    return {"signal": signal, "confidence": round(confidence, 3)}
+
+def _is_market_open(category: str) -> bool:
+    if category.startswith("crypto"):
+        return True
+    now_utc = datetime.now(pytz.utc)
+    if category.startswith("india"):
+        ist = now_utc.astimezone(pytz.timezone('Asia/Kolkata'))
+        if ist.weekday() >= 5: return False
+        market_open = ist.replace(hour=9, minute=15, second=0, microsecond=0)
+        market_close = ist.replace(hour=15, minute=30, second=0, microsecond=0)
+        return market_open <= ist <= market_close
+    if category.startswith("us"):
+        est = now_utc.astimezone(pytz.timezone('America/New_York'))
+        if est.weekday() >= 5: return False
+        market_open = est.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = est.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= est <= market_close
+    return True
+
+async def _fetch_and_batch_predict(assets, predictor, loop, executor):
+    open_assets = []
+    for a in assets:
+        if _is_market_open(a.get("category", "crypto")):
+            open_assets.append(a)
+        else:
+            print(f"[Daemon] 💤 Skipping {a['symbol']}: Market is closed.")
+            
+    if not open_assets: return []
+
+    async def fetch_one(asset):
+        await asyncio.sleep(random.uniform(0.1, 0.5))
         try:
-            enabled = get_setting("daemon_enabled")
-            if enabled == "true":
-                analyzer.analyze()
-                
-                # Rollover check
-                now = datetime.now()
-                delta_days = (now - epoch_start_time).days
-                port = get_portfolio()
-                current_equity = port["total_equity"]
-                
-                if delta_days >= 7:
-                    start_of_week = current_equity
-                    set_setting("epoch_week_start_equity", str(start_of_week))
-                    if delta_days >= 30:
-                        start_of_month = current_equity
-                        set_setting("epoch_month_start_equity", str(start_of_month))
-                    
-                    epoch_start_time = now
-                    set_setting("epoch_start_time", epoch_start_time.isoformat())
-                    print("[Daemon] Epoch Rollover Triggered. Memory updated.")
-                
-                # Hunger Engine evaluation
-                port = get_portfolio()
-                tracker = ObjectiveTracker(start_of_week, start_of_month, port["total_equity"])
-                drive_state = tracker.evaluate()
-                
-                print(f"[Daemon] State: {drive_state['state']} | Reason: {drive_state['reason']}")
-                
-                if drive_state["state"] == "RESEARCH_MODE":
-                    # Trigger Strategy Shift
-                    shift_plan = research_node.execute_deep_research()
-                    # Apply the greedy recovery multiplier
-                    drive_state["position_multiplier"] = shift_plan.get("greedy_recovery_multiplier", 1.5)
-                    # We reset the epoch tracking so it doesn't stay stuck in RESEARCH_MODE
-                    start_of_week = port["total_equity"]
-                    start_of_month = port["total_equity"]
-                    epoch_start_time = datetime.now()
-                    set_setting("epoch_start_time", epoch_start_time.isoformat())
-                    set_setting("epoch_week_start_equity", str(start_of_week))
-                    set_setting("epoch_month_start_equity", str(start_of_month))
-                    print("[Daemon] Strategy Shift Applied. Resetting Epoch base balances.")
-
-                _evaluate_trades(eval_func, analyzer, skills_engine, drive_state)
-            time.sleep(60)
+            source = asset["source"]
+            symbol = asset["symbol"]
+            token = asset.get("token", symbol)
+            ticker = asset.get("yf_ticker", symbol)
+            interval = asset["interval"]
+            df = await loop.run_in_executor(executor, _load_df, source, symbol, token, ticker, interval)
+            return asset, df
         except Exception as e:
-            print(f"[Daemon] Error in loop: {e}")
-            time.sleep(60)
+            print(f"[Daemon] Error fetching {asset['symbol']}: {e}")
+            return asset, None
+            
+    print(f"[Daemon] 📡 Fetching {len(open_assets)} assets asynchronously...")
+    tasks = [fetch_one(a) for a in open_assets]
+    results = await asyncio.gather(*tasks)
+    
+    valid_assets = []
+    df_list = []
+    x_ts_list = []
+    y_ts_list = []
+    ctx = predictor.max_context if hasattr(predictor, "max_context") else 512
+    lookback = 200
+    
+    for asset, df in results:
+        if df is None or len(df) < lookback + 35:
+            continue
+            
+        df.drop_duplicates(subset=["timestamps"], keep="last", inplace=True)
+        x_df = df.iloc[-lookback:][["open", "high", "low", "close"] + (["volume"] if "volume" in df.columns else [])].copy()
+        x_ts = df.iloc[-lookback:]["timestamps"].reset_index(drop=True)
+        time_diff = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(hours=1)
+        y_ts = pd.Series(pd.date_range(start=x_ts.iloc[-1] + time_diff, periods=30, freq=time_diff))
+        
+        valid_assets.append((asset, df))
+        df_list.append(x_df)
+        x_ts_list.append(x_ts)
+        y_ts_list.append(y_ts)
+        
+    if not valid_assets: return []
+    
+    print(f"[Daemon] 🚀 Batch Predicting {len(valid_assets)} assets using Matrix Inference...")
+    try:
+        preds = predictor.predict_batch(df_list, x_ts_list, y_ts_list, pred_len=30, T=0.8, top_p=0.9, sample_count=1, verbose=False)
+    except Exception as e:
+        print(f"[Daemon Evaluator Error] Batch predict failed: {e}")
+        return []
+        
+    final_results = []
+    for (asset, df), pred_df in zip(valid_assets, preds):
+        sig_info = _generate_signal(df.iloc[-lookback:], pred_df, ctx)
+        final_results.append((asset, sig_info["signal"], sig_info["confidence"], float(df.iloc[-1]["close"]), df))
+        
+    return final_results
 
-def _evaluate_trades(eval_func, analyzer, skills_engine, drive_state):
+async def _evaluate_trades_async(analyzer, skills_engine, drive_state, predictor, loop, executor):
     open_pos = get_open_positions()
     open_symbols = {p["symbol"]: p for p in open_pos}
     
-    # Count positions per category for correlation cap
     cat_counts = {}
     for p in open_pos:
         cat = p.get("category", "crypto_mid")
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
     
-    for asset in AUTO_TRADE_POOL:
+    batch_results = await _fetch_and_batch_predict(AUTO_TRADE_POOL, predictor, loop, executor)
+    
+    for asset, signal, confidence, last_price_raw, df in batch_results:
         symbol = asset["symbol"]
         category = asset["category"]
         
         try:
-            result = eval_func(asset)
-            if not result: continue
-            
-            if len(result) == 4:
-                signal, confidence, last_price_raw, df = result
-            else:
-                signal, confidence, last_price_raw = result
-                df = None
-                
             # Currency Normalization: Convert USD assets to INR for unified portfolio math
             USD_INR_RATE = 83.5
             is_usd = category.startswith("crypto_") or category.startswith("us_")
@@ -277,56 +323,90 @@ def _evaluate_trades(eval_func, analyzer, skills_engine, drive_state):
         except Exception as e:
             print(f"[Daemon] Error evaluating {symbol}: {e}")
 
-def start_daemon(eval_func):
-    t = threading.Thread(target=daemon_loop, args=(eval_func,), daemon=True)
+async def daemon_loop(predictor, loop, executor):
+    print("[Daemon] Virtual Broker daemon started (Async-Batch Mode).")
+    analyzer = StrategyAnalyzer()
+    skills_engine = SkillsEngine()
+    research_node = ResearchNode()
+    
+    port = get_portfolio()
+    current_equity = port["total_equity"]
+    
+    epoch_time_str = get_setting("epoch_start_time")
+    week_eq_str = get_setting("epoch_week_start_equity")
+    month_eq_str = get_setting("epoch_month_start_equity")
+    
+    if not epoch_time_str or not week_eq_str or not month_eq_str:
+        epoch_start_time = datetime.now()
+        start_of_week = current_equity
+        start_of_month = current_equity
+        set_setting("epoch_start_time", epoch_start_time.isoformat())
+        set_setting("epoch_week_start_equity", str(start_of_week))
+        set_setting("epoch_month_start_equity", str(start_of_month))
+    else:
+        epoch_start_time = datetime.fromisoformat(epoch_time_str)
+        start_of_week = float(week_eq_str)
+        start_of_month = float(month_eq_str)
+    
+    while True:
+        try:
+            enabled = get_setting("daemon_enabled")
+            if enabled == "true":
+                analyzer.analyze()
+                
+                now = datetime.now()
+                delta_days = (now - epoch_start_time).days
+                port = get_portfolio()
+                current_equity = port["total_equity"]
+                
+                if delta_days >= 7:
+                    start_of_week = current_equity
+                    set_setting("epoch_week_start_equity", str(start_of_week))
+                    if delta_days >= 30:
+                        start_of_month = current_equity
+                        set_setting("epoch_month_start_equity", str(start_of_month))
+                    
+                    epoch_start_time = now
+                    set_setting("epoch_start_time", epoch_start_time.isoformat())
+                    print("[Daemon] Epoch Rollover Triggered. Memory updated.")
+                
+                port = get_portfolio()
+                tracker = ObjectiveTracker(start_of_week, start_of_month, port["total_equity"])
+                drive_state = tracker.evaluate()
+                
+                print(f"[Daemon] State: {drive_state['state']} | Reason: {drive_state['reason']}")
+                
+                if drive_state["state"] == "RESEARCH_MODE":
+                    shift_plan = research_node.execute_deep_research()
+                    drive_state["position_multiplier"] = shift_plan.get("greedy_recovery_multiplier", 1.5)
+                    start_of_week = port["total_equity"]
+                    start_of_month = port["total_equity"]
+                    epoch_start_time = datetime.now()
+                    set_setting("epoch_start_time", epoch_start_time.isoformat())
+                    set_setting("epoch_week_start_equity", str(start_of_week))
+                    set_setting("epoch_month_start_equity", str(start_of_month))
+                    print("[Daemon] Strategy Shift Applied. Resetting Epoch base balances.")
+
+                await _evaluate_trades_async(analyzer, skills_engine, drive_state, predictor, loop, executor)
+            await asyncio.sleep(60)
+        except Exception as e:
+            print(f"[Daemon] Error in loop: {e}")
+            await asyncio.sleep(60)
+
+def start_daemon(predictor):
+    def run_async():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        executor = ThreadPoolExecutor(max_workers=10)
+        loop.run_until_complete(daemon_loop(predictor, loop, executor))
+        
+    t = threading.Thread(target=run_async, daemon=True)
     t.start()
 
 if __name__ == "__main__":
     from kronos.model.kronos import Kronos, KronosTokenizer, KronosPredictor
-    from kronos.data.fetcher import fetch_binance, fetch_yfinance, fetch_indian_stock, fetch_angel_one
     from kronos.data.repository import init_db
-    import numpy as np
-    import pandas as pd
-
-    TIMEFRAME_CONFIG = {
-        "15m": {"binance_interval": "15m", "yf_interval": "15m", "yf_period": "60d",  "binance_days": 30, "fyers_interval": "15",  "fyers_days": 30},
-        "1h":  {"binance_interval": "1h",  "yf_interval": "1h",  "yf_period": "60d",  "binance_days": 60, "fyers_interval": "60",  "fyers_days": 60},
-        "4h":  {"binance_interval": "4h",  "yf_interval": "60m", "yf_period": "60d",  "binance_days": 90, "fyers_interval": "240", "fyers_days": 90},
-        "1d":  {"binance_interval": "1d",  "yf_interval": "1d",  "yf_period": "2y",   "binance_days": 500, "fyers_interval": "D",   "fyers_days": 500},
-    }
     
-    def _load_df(source: str, symbol: str = None, token: str = None, ticker: str = None, interval: str = "1h") -> pd.DataFrame:
-        cfg = TIMEFRAME_CONFIG.get(interval, TIMEFRAME_CONFIG["1h"])
-        if source == "binance": return fetch_binance(symbol, cfg["binance_interval"], cfg["binance_days"])
-        elif source == "angelone": return fetch_angel_one(token or symbol, "NSE", cfg["fyers_interval"], cfg["fyers_days"])
-        elif source == "angelone_fallback": 
-            df, src = fetch_indian_stock(token or symbol, ticker, cfg["fyers_interval"], cfg["fyers_days"])
-            return df
-        else: return fetch_yfinance(ticker, cfg["yf_interval"], cfg["yf_period"])
-
-    def _compute_atr(df: pd.DataFrame, period: int = 14) -> float:
-        if len(df) < period + 1: return 0.0
-        h, l, c = df["high"].values, df["low"].values, df["close"].values
-        tr = np.maximum(h[1:] - l[1:], np.maximum(np.abs(h[1:] - c[:-1]), np.abs(l[1:] - c[:-1])))
-        atr = float(np.mean(tr[-period:]))
-        return atr / float(c[-1])
-
-    def _generate_signal(df: pd.DataFrame, pred_df: pd.DataFrame, context_len: int = 2048) -> dict:
-        last_close = float(df["close"].iloc[-1])
-        forecast_close = float(pred_df["close"].iloc[-1])
-        return_pct = (forecast_close - last_close) / last_close * 100.0
-        atr_pct = _compute_atr(df) * 100.0
-        threshold = max(atr_pct * 0.5, 0.10)
-        
-        if return_pct > threshold: signal = "BUY"
-        elif return_pct < -threshold: signal = "SELL"
-        else: signal = "HOLD"
-        
-        sigma = atr_pct / 2.0 if atr_pct > 0 else 0.5
-        confidence = min(abs(return_pct) / max(threshold + sigma, 0.01), 1.0)
-        
-        return {"signal": signal, "confidence": round(confidence, 3)}
-
     print("[Daemon] Initializing Database...")
     init_db()
 
@@ -340,68 +420,10 @@ if __name__ == "__main__":
         print(f"[Daemon] WARNING: AI Model load failed: {e}. Falling back to sleep.")
         _predictor = None
 
-    def _is_market_open(category: str) -> bool:
-        if category.startswith("crypto"):
-            return True
-        import pytz
-        from datetime import datetime
-        now_utc = datetime.now(pytz.utc)
-        if category.startswith("india"):
-            ist = now_utc.astimezone(pytz.timezone('Asia/Kolkata'))
-            if ist.weekday() >= 5: return False
-            market_open = ist.replace(hour=9, minute=15, second=0, microsecond=0)
-            market_close = ist.replace(hour=15, minute=30, second=0, microsecond=0)
-            return market_open <= ist <= market_close
-        if category.startswith("us"):
-            est = now_utc.astimezone(pytz.timezone('America/New_York'))
-            if est.weekday() >= 5: return False
-            market_open = est.replace(hour=9, minute=30, second=0, microsecond=0)
-            market_close = est.replace(hour=16, minute=0, second=0, microsecond=0)
-            return market_open <= est <= market_close
-        return True
-
-    def _daemon_evaluator(asset):
-        if _predictor is None: return None
-        if not _is_market_open(asset.get("category", "crypto")):
-            print(f"[Daemon] 💤 Skipping {asset['symbol']}: Market is closed.")
-            return None
-        try:
-            source = asset["source"]
-            symbol = asset["symbol"]
-            token = asset.get("token", symbol)
-            ticker = asset.get("yf_ticker", symbol)
-            interval = asset["interval"]
-            
-            df = _load_df(source, symbol=symbol, token=token, ticker=ticker, interval=interval)
-            df.drop_duplicates(subset=["timestamps"], keep="last", inplace=True)
-            ctx = _predictor.max_context if hasattr(_predictor, "max_context") else 512
-            lookback = min(int(ctx * 0.8), len(df) - 30 - 5)
-            if lookback < 10: return None
-            
-            x_df = df.iloc[-lookback:][["open", "high", "low", "close"] + (["volume"] if "volume" in df.columns else [])].copy()
-            x_ts = df.iloc[-lookback:]["timestamps"].reset_index(drop=True)
-            time_diff = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(hours=1)
-            import pandas as pd
-            y_ts = pd.Series(pd.date_range(start=x_ts.iloc[-1] + time_diff, periods=30, freq=time_diff))
-            
-            all_preds = []
-            for _ in range(3):
-                p = _predictor.predict(df=x_df.copy(), x_timestamp=x_ts.copy(), y_timestamp=y_ts.copy(), pred_len=30, T=0.8, top_p=0.9, sample_count=1)
-                all_preds.append(p)
-                
-            pred_df = all_preds[0].copy()
-            for col in ["open", "high", "low", "close"]:
-                pred_df[col] = np.mean([p[col].values for p in all_preds], axis=0)
-                
-            sig_info = _generate_signal(df.iloc[-lookback:], pred_df, ctx)
-            return sig_info["signal"], sig_info["confidence"], df.iloc[-1]["close"], df
-        except Exception as e:
-            print(f"[Daemon Evaluator Error] {e}")
-            return None
-
     if _predictor is not None:
         print("[Daemon] Handing over to main trading loop...")
-        daemon_loop(_daemon_evaluator)
+        start_daemon(_predictor)
+        while True: time.sleep(60)
     else:
         print("[Daemon] Idle mode. AI model not found.")
         while True:

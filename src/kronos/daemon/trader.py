@@ -340,8 +340,31 @@ if __name__ == "__main__":
         print(f"[Daemon] WARNING: AI Model load failed: {e}. Falling back to sleep.")
         _predictor = None
 
+    def _is_market_open(category: str) -> bool:
+        if category.startswith("crypto"):
+            return True
+        import pytz
+        from datetime import datetime
+        now_utc = datetime.now(pytz.utc)
+        if category.startswith("india"):
+            ist = now_utc.astimezone(pytz.timezone('Asia/Kolkata'))
+            if ist.weekday() >= 5: return False
+            market_open = ist.replace(hour=9, minute=15, second=0, microsecond=0)
+            market_close = ist.replace(hour=15, minute=30, second=0, microsecond=0)
+            return market_open <= ist <= market_close
+        if category.startswith("us"):
+            est = now_utc.astimezone(pytz.timezone('America/New_York'))
+            if est.weekday() >= 5: return False
+            market_open = est.replace(hour=9, minute=30, second=0, microsecond=0)
+            market_close = est.replace(hour=16, minute=0, second=0, microsecond=0)
+            return market_open <= est <= market_close
+        return True
+
     def _daemon_evaluator(asset):
         if _predictor is None: return None
+        if not _is_market_open(asset.get("category", "crypto")):
+            print(f"[Daemon] 💤 Skipping {asset['symbol']}: Market is closed.")
+            return None
         try:
             source = asset["source"]
             symbol = asset["symbol"]
